@@ -13,16 +13,16 @@ public class DrawLine : MonoBehaviour {
         var texture = new Texture2D((int)image.rectTransform.sizeDelta.x, (int)image.rectTransform.sizeDelta.y);
         image.texture = texture;
 
-        var raster = new Rasterizer(texture);
+        var raster = new SoftRender(texture, null);
 
         float width = texture.width;
         float height = texture.height;
 
         for (int i =0; i < 100; ++i) {
-            var start = new Vector2(Random.Range(-width, width * 2), Random.Range(-height, height * 2));
-            var end = new Vector2(Random.Range(-width, width * 2), Random.Range(-height, height * 2));
+            var start = new SoftRender.VertexIn(Random.Range(-width, width * 2), Random.Range(-height, height * 2));
+            var end = new SoftRender.VertexIn(Random.Range(-width, width * 2), Random.Range(-height, height * 2));
             var color = new Color(Random.value, Random.value, Random.value);
-            raster.DrawLine(ref start, ref end, ref color);
+            raster.DrawLine(start, end, ref color);
         }
         texture.Apply();
 	}

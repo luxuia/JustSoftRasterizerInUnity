@@ -2,158 +2,205 @@
 using System.Collections.Generic;
 using UnityEngine;
 
-public class Rasterizer {
+public partial class SoftRender {
 
-    public Texture2D texture;
+    public List<FragmentIn> Rast(FragmentIn v1, FragmentIn v2, FragmentIn v3) {
+        var p1 = v1.vertex;
+        var p2 = v2.vertex;
+        var p3 = v3.vertex;
 
-	public Rasterizer(Texture2D texture) {
-        this.texture = texture;
+        int xMin = (int)Mathf.Min(p1.x, p2.x, p3.x);
+        int xMax = (int)Mathf.Max(p1.x, p2.x, p3.x);
+        int yMin = (int)Mathf.Min(p1.y, p2.y, p3.y);
+        int yMax = (int)Mathf.Max(p1.y, p2.y, p3.y);
+        var fragList = new List<FragmentIn>((xMax - xMin) * (yMax - yMin));
+        for (int m = xMin; m < xMax + 1; m++) {
+            for (int n = yMin; n < yMax + 1; n++) {
+                if (m < 0 || m > width - 1 || n < 0 || n > height - 1) continue;
+                if (!isLeftPoint(p1, p2, m + 0.5f, n + 0.5f)) continue;
+                if (!isLeftPoint(p2, p3, m + 0.5f, n + 0.5f)) continue;
+                if (!isLeftPoint(p3, p1, m + 0.5f, n + 0.5f)) continue;
+                var frag = new FragmentIn();
+                frag.pixelx = m;
+                frag.pixely = n;
+                LerpFragment(v1, v2, v3, frag);
+                fragList.Add(frag);
+            }
+        }
+        return fragList;
     }
 
-    void DrawPixel(int x, int y, ref Color color) {
-        texture.SetPixel(x, y, color);
+    public bool isLeftPoint(Vector3 a, Vector3 b, float x, float y) {
+        float s = (a.x - x) * (b.y - y) - (a.y - y) * (b.x - x);
+        return s > 0 ? false : true;
     }
 
-    public void DrawLine(ref Vector2 start, ref Vector2 end, ref Color color) {
-        //裁剪不可见的线
-        if (!CohenSutherlandLineClip(ref start, ref end, new Vector2(100, 100), new Vector2(texture.width-100, texture.height-100))) {
-            return;
+
+    // 基于斜率的办法避免不了精度误差
+    /*
+    List<FragmentIn> Rast(FragmentIn v1, FragmentIn v2, FragmentIn v3) {
+        var frags = new List<FragmentIn>();
+
+        var vv1 = v1;
+        var vv2 = v2;
+        var vv3 = v3;
+
+        // 保证v1,v2,v3 y轴依次变小
+        if (v1.vertex.y < v2.vertex.y) Swap(ref v1, ref v2);
+        if (v1.vertex.y < v3.vertex.y) Swap(ref v1, ref v3);
+        if (v2.vertex.y < v3.vertex.y) Swap(ref v2, ref v3);
+
+        var p1 = v1.vertex;
+        var p2 = v2.vertex;
+        var p3 = v3.vertex;
+
+        if (p2.y == p3.y) {
+            RastTriangle(v2, v3, v1, frags);
+        }
+        else if (p1.y == p2.y) {
+            RastTriangle(v1, v2, v3, frags);
+        }
+        else {
+            // y = y0 + k(x-x0)
+            // x = x0 + 1/k*(y-y0)
+            // 注意斜率为0或无穷大的情况
+            float k = (p1.y - p3.y) / (p1.x - p3.x);
+            float splitx;
+            float splity;
+
+            if (p1.x != p3.x) {
+                splitx = p3.x + (p2.y - p3.y) / k;
+                splity = p2.y;
+            } else {
+                splitx = p3.x;
+                splity = p2.y;
+            }
+
+            var splitv = new FragmentIn();
+            splitv.pixelx = (int)splitx;
+            splitv.pixely = (int)splity;
+
+            LerpFragment(v1, v2, v3, splitv);
+            
+            RastTriangle(v2, splitv, v1, frags);
+            RastTriangle(v2, splitv, v3, frags);
         }
 
-        int x0 = (int)start.x;
-        int x1 = (int)end.x;
+        return frags;
+    }
 
-        int y0 = (int)start.y;
-        int y1 = (int)end.y;
-        
-        if (x0 == x1 && y0 == y1) {
-            //点
-            DrawPixel(x0, y0, ref color);
-        } else if (x0 == x1) {
-            // 竖线
-            int inc = y0 > y1 ? -1 : 1;
-            for (var y = y0; y != y1; y += inc) DrawPixel(x0, y, ref color);
-            DrawPixel(x1, y1, ref color);
-        } else if (y0 == y1) {
-            // 横线
-            int inc = x0 > x1 ? -1 : 1;
-            for (var x = x0; x != x1; x += inc) DrawPixel(x, y0, ref color);
-            DrawPixel(x1, y1, ref color);
-        } else {
-            int dx = (x0 < x1) ? x1 - x0 : x0 - x1;
-            int dy = (y0 < y1) ? y1 - y0 : y0 - y1;
+    // 扫描线
+    //   /\3
+    // 1----2
+    void RastTriangle(FragmentIn v1, FragmentIn v2, FragmentIn v3, List<FragmentIn> frags) {
 
-            // k < 0
-            if (dx > dy) {
-                if (x1 < x0) {
-                    Const.Swap(ref x0, ref x1);
-                    Const.Swap(ref y0, ref y1);
-                }
+        var p1 = v1.vertex;
+        var p2 = v2.vertex;
+        var p3 = v3.vertex;
 
-                int rem = 0, x, y;
-                for (x = x0, y = y0; x<=x1; x++) {
-                    DrawPixel(x, y, ref color);
-                    rem += dy;
-                    if (rem >= dx) {
-                        rem -= dx;
-                        y += (y1 > y0) ? 1 : -1;
-                    }
-                }
-            } else {
-                if (y1 < y0) {
-                    Const.Swap(ref x0, ref x1);
-                    Const.Swap(ref y0, ref y1);
-                }
-                int rem = 0, x, y;
-                for (x = x0, y = y0; y<=y1; y++) {
-                    DrawPixel(x, y, ref color);
-                    rem += dx;
-                    if (rem >= dy) {
-                        rem -= dy;
-                        x += (x1 > x0) ? 1 : -1;
-                    }
+
+        float curx1 = p1.x;
+        float curx2 = p2.x;
+        int inc = p1.y > p3.y ? -1 : 1;
+
+        int scanline = (int)p1.y;
+        int scanto = (int)p3.y;
+        if (scanline == scanto) {
+            //三角形退化
+
+            curx1 = Mathf.Min(Mathf.Max(curx1, 0), width);
+            curx2 = Mathf.Min(Mathf.Max(curx2, 0), width);
+
+            var ix1 = (int)curx1;
+            var ix2 = (int)curx2;
+            if (ix1 == ix2) {
+                var frag = new FragmentIn();
+                frag.pixelx = ix1;
+                frag.pixely = scanline;
+
+                LerpFragment(v1, v2, v3, frag);
+
+                frags.Add(frag);
+            }
+            else {
+                var incx = ix1 > ix2 ? -1 : 1;
+                for (int x = ix1; x != ix2; x += incx) {
+                    var frag = new FragmentIn();
+                    frag.pixelx = x;
+                    frag.pixely = scanline;
+
+                    LerpFragment(v1, v2, v3, frag);
+
+                    frags.Add(frag);
                 }
             }
         }
-    }
+        else {
+            float slop1 = (p3.x - p1.x)/(p3.y - p1.y);
+            float slop2 = (p3.x - p2.x)/(p3.y - p2.y);
 
-    bool CohenSutherlandLineClip(ref Vector2 start, ref Vector2 end, Vector2 min, Vector2 max) {
-        float x0 = start.x;
-        float x1 = end.x;
-        
-        float y0 = start.y;
-        float y1 = end.y;
+            for (; scanline != scanto; scanline += inc) {
 
-        int encode0 = Encode(ref start, ref min, ref max);
-        int encode1 = Encode(ref end, ref min, ref max);
+                curx1 = Mathf.Min(Mathf.Max(curx1, 0), width);
+                curx2 = Mathf.Min(Mathf.Max(curx2, 0), width);
 
-        bool accept = false;
+                var ix1 = (int)curx1;
+                var ix2 = (int)curx2;
+                if (ix1 == ix2) {
+                    var frag = new FragmentIn();
+                    frag.pixelx = ix1;
+                    frag.pixely = scanline;
 
-        while (true) {
-            if ((encode0 | encode1) == 0) {
-                accept = true;
-                break;
-            } else if ((encode0 & encode1) > 0) {
-                // 起点终点都在边上
-                break;
-            } else {
-                float x = 0, y = 0;
-                int encodeOut = encode0 > 0 ? encode0 : encode1;
+                    LerpFragment(v1, v2, v3, frag);
 
-                float k = (y1 - y0) / (x1 - x0);
-
-                // y = y0 + k(x-x0)
-                // x = x0 + 1/k*(y-y0)
-                if ((encodeOut & Const.ENCODE_SIDE_TOP)>0) {
-                    y = max.y;
-                    x = x0 + (y - y0) / k;
-                } else if ((encodeOut & Const.ENCODE_SIDE_BOTTOM) > 0) {
-                    y = min.y;
-                    x = x0 + (y - y0) / k;
-                } else if ((encodeOut & Const.ENCODE_SIDE_LEFT) > 0) {
-                    x = min.x;
-                    y = y0 + (x - x0) * k;
-                } else if ((encodeOut&Const.ENCODE_SIDE_RIGHT) > 0) {
-                    x = max.x;
-                    y = y0 + (x - x0) * k;
-                }
-
-                if (encodeOut == encode0) {
-                    x0 = x;
-                    y0 = y;
-                    var new_pos = new Vector2(x, y);
-                    encode0 = Encode(ref new_pos, ref min, ref max);
+                    frags.Add(frag);
                 } else {
-                    x1 = x;
-                    y1 = y;
-                    var new_pos = new Vector2(x, y);
-                    encode1 = Encode(ref new_pos, ref min, ref max);
+                    var incx = ix1 > ix2 ? -1 : 1;
+
+                    for (int x = ix1; x != ix2; x += incx) {
+
+                        var frag = new FragmentIn();
+                        frag.pixelx = x;
+                        frag.pixely = scanline;
+
+                        LerpFragment(v1, v2, v3, frag);
+
+                        frags.Add(frag);
+                    }
                 }
+
+                curx1 += inc * slop1;
+                curx2 += inc * slop2;
             }
         }
-        if (accept) {
-            start.x = x0;
-            start.y = y0;
-
-            end.x = x1;
-            end.y = y1;
-        }
-        return accept;
     }
+    */
 
-    int Encode(ref Vector2 pos, ref Vector2 min, ref Vector2 max) {
-        int code = Const.ENCODE_SIDE_INSIDE;
+    // 基于三角形面积做插值
+    bool LerpFragment(FragmentIn v1, FragmentIn v2, FragmentIn v3, FragmentIn ret) {
+        var v0 = new Vector4(ret.pixelx, ret.pixely);
+        var d01 = v0 - v1.vertex;
 
-        if (pos.x < min.x)
-            code |= Const.ENCODE_SIDE_LEFT;
-        else if (pos.x > max.x)
-            code |= Const.ENCODE_SIDE_RIGHT;
+        var d21 = v2.vertex - v1.vertex;
+        var d31 = v3.vertex - v1.vertex;
 
-        if (pos.y < min.y)
-            code |= Const.ENCODE_SIDE_BOTTOM;
-        else if (pos.y > max.y)
-            code |= Const.ENCODE_SIDE_TOP;
+        var denom = Mathf.Abs(d21.x * d31.y - d21.y * d31.x);
 
-        return code;
+        if (denom < 0.000001) {
+            return false;
+        }
+
+        var u = Mathf.Abs(d01.x * d31.y - d01.y * d31.x) / denom; // close to v2
+        var v = Mathf.Abs(d01.x * d21.y - d01.y * d21.x) / denom; // close to v3
+        var w = 1 - u - v; // close to v1
+
+        // do lerp
+        ret.vertex = v2.vertex * u + v3.vertex * v + v1.vertex * w;
+        ret.normal = v2.normal * u + v3.normal * v + v1.normal * w;
+        ret.worldPos = v2.worldPos * u + v3.worldPos * v + v1.worldPos * w;
+        ret.uv = v2.uv * u + v3.uv * v + v1.uv * w;
+        ret.color = v2.color * u + v3.color * v + v1.color * w;
+
+        return true;
     }
 }
