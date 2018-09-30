@@ -19,5 +19,5 @@ public static class ShaderGlobal {
     //环境光
     public static Color Ambient = Color.gray;
 
-    public static Light[] lights;
+    public static SoftRender.LightData[] lights;
 }

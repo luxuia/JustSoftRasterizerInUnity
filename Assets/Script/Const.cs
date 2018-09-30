@@ -94,4 +94,15 @@ public partial class SoftRender {
         public int pixelx;
         public int pixely;
     }
+
+    public class LightData {
+        public Vector3 forward;
+        public Vector3 pos;
+        public LightType type;
+        public float spotAngle;
+        public float range;
+        public float intensity;
+
+        public Color color;
+    }
 }

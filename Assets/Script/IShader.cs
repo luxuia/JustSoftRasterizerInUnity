@@ -29,24 +29,24 @@ public partial class SoftRender {
             switch (light.type) {
                 // 这一部分计算要预处理下
                 case LightType.Directional:
-                    dir = -light.transform.forward;
+                    dir = -light.forward;
                     intensity = light.intensity;
                     break;
                 case LightType.Point:
-                    dir = light.transform.position - v.worldPos;
+                    dir = light.pos - v.worldPos;
                     // 正常的intensity公式是 1/(a+b*dis+c*dis^2)
                     intensity = Mathf.Clamp01( light.intensity * (1- dir.magnitude/light.range));
                     
                     dir.Normalize();
                     break;
                 case LightType.Spot:
-                    dir = light.transform.position - v.worldPos;
-                    float rho = Mathf.Max(0, Vector3.Dot(dir.normalized, -light.transform.forward));
+                    dir = light.pos - v.worldPos;
+                    float rho = Mathf.Max(0, Vector3.Dot(dir.normalized, -light.forward));
                     intensity = Mathf.Clamp01((Mathf.Cos(light.spotAngle * Mathf.Deg2Rad) - rho) * light.intensity * (1- dir.magnitude/light.range));
                     dir.Normalize();
                     break;
                 default:
-                    dir = -light.transform.forward;
+                    dir = -light.forward;
                     intensity = light.intensity;
                     break;
             }

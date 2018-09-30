@@ -1,12 +1,17 @@
-﻿using System.Collections;
+﻿#define USE_PARALLER
+
+using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using System.Linq;
+
+
 
 public partial class SoftRender {
 
     public Texture2D texture; // color buffer
     public float[,] depthBuffer; // depth buffer
+    public Color[] colorBuffer;
     public Camera camera;
 
     List<FragmentIn> vertexList;
@@ -30,16 +35,36 @@ public partial class SoftRender {
         height = texture.height;
 
         depthBuffer = new float[width, height];
+        colorBuffer = new Color[width * height];
+        var grey = new Color(0.1f, 0.1f, 0.1f, 0.1f);
+        for (var i = 0; i < width*height;++i) {
+            colorBuffer[i] = grey;
+        }
 
-        ShaderGlobal.lights = GameObject.FindObjectsOfType<Light>();
+        var lights = GameObject.FindObjectsOfType<Light>();
+        ShaderGlobal.lights = new LightData[lights.Length];
+        for (int i = 0; i < lights.Length; ++i) {
+            var lightdata = new LightData();
+            var light = lights[i];
+            lightdata.forward = light.transform.forward;
+            lightdata.pos = light.transform.position;
+            lightdata.spotAngle = light.spotAngle;
+            lightdata.type = light.type;
+            lightdata.range = light.range;
+            lightdata.color = light.color;
+            lightdata.intensity = light.intensity;
+
+            ShaderGlobal.lights[i] = lightdata;
+        }
         if (camera)
             ShaderGlobal.CameraPos = camera.transform.position;
     }
+    void DrawPixel(int x, int y, ref Color color) {
+        colorBuffer[x+ y*width] = color;
+    }
+
 
     #region draw2d
-    void DrawPixel(int x, int y, ref Color color) {
-        texture.SetPixel(x, y, color);
-    }
 
     public void DrawLine(VertexIn start, VertexIn end, ref Color color) {
         //裁剪不可见的线
@@ -266,6 +291,7 @@ public partial class SoftRender {
                 DrawElement(vao);
             }
         }
+        texture.SetPixels(colorBuffer);
     }
 
     void DrawElement(VAO vao) {
@@ -343,29 +369,36 @@ public partial class SoftRender {
         VertexCount = vertexList.Count;
 
         for (int i =0; i<vertexList.Count;) {
-            var frags = Rast(vertexList[i], vertexList[i+1], vertexList[i+2]);
+
+#if USE_PARALLER
+            var fragcount = ParallRast(vertexList[i], vertexList[i + 1], vertexList[i + 2]);
+
+            FragmentCount += fragcount;
+#else
+            var frags = Rast(vertexList[i], vertexList[i + 1], vertexList[i + 2]);
 
             FragmentCount += frags.Count;
 
             foreach (var frag in frags) {
-                if (frag.pixelx >= width || frag.pixely >= height) {
-                    continue;
-                }
-                var old_depth = depthBuffer[frag.pixelx, frag.pixely];
-                // do early z
-                if (frag.vertex.z > old_depth && old_depth > 0) {
-                    EarlyZCount++;
-                };
-
-                Color color = Frag(frag);
-
-                DrawPixel(frag.pixelx, frag.pixely, ref color);
-                depthBuffer[frag.pixelx, frag.pixely] = frag.vertex.z;
+                 if (frag.pixelx >= width || frag.pixely >= height) {
+                     continue;
+                 }
+                 var old_depth = depthBuffer[frag.pixelx, frag.pixely];
+                 // do early z
+                 if (frag.vertex.z > old_depth && old_depth > 0) {
+                     EarlyZCount++;
+                 };
+ 
+                 Color color = Frag(frag);
+ 
+                 DrawPixel(frag.pixelx, frag.pixely, ref color);
+                 depthBuffer[frag.pixelx, frag.pixely] = frag.vertex.z;
 
                 FinalWriteCount++;
             }
+#endif
             i += 3;
         }
     }
-    #endregion
+#endregion
 }

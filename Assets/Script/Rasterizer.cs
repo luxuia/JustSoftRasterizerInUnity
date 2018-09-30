@@ -1,8 +1,11 @@
 ﻿using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
+using System.Threading;
 
 public partial class SoftRender {
+
+    public FragmentIn GLOBAL_PARALL_V1, GLOBAL_PARALL_V2, GLOBAL_PARALL_V3;
 
     public List<FragmentIn> Rast(FragmentIn v1, FragmentIn v2, FragmentIn v3) {
         var p1 = v1.vertex;
@@ -28,6 +31,58 @@ public partial class SoftRender {
             }
         }
         return fragList;
+    }
+
+    public int ParallRast(FragmentIn v1, FragmentIn v2, FragmentIn v3) {
+        var p1 = v1.vertex;
+        var p2 = v2.vertex;
+        var p3 = v3.vertex;
+
+        GLOBAL_PARALL_V1 = v1;
+        GLOBAL_PARALL_V2 = v2;
+        GLOBAL_PARALL_V3 = v3;
+
+        int xMin = (int)Mathf.Min(p1.x, p2.x, p3.x);
+        int xMax = (int)Mathf.Max(p1.x, p2.x, p3.x);
+        int yMin = (int)Mathf.Min(p1.y, p2.y, p3.y);
+        int yMax = (int)Mathf.Max(p1.y, p2.y, p3.y);
+
+        var fragCount = 0;
+
+        int threadCount = (xMax-xMin+1) *(yMax-yMin+1);
+        
+        var finishEvent = new ManualResetEvent(false);
+
+        for (int m = xMin; m < xMax + 1; m++) {
+            for (int n = yMin; n < yMax + 1; n++) {
+                if ((m < 0 || m > width - 1 || n < 0 || n > height - 1) ||
+                    (!isLeftPoint(p1, p2, m + 0.5f, n + 0.5f)) ||
+                    (!isLeftPoint(p2, p3, m + 0.5f, n + 0.5f)) ||
+                    (!isLeftPoint(p3, p1, m + 0.5f, n + 0.5f))) {
+
+                    if (Interlocked.Decrement(ref threadCount) == 0) {
+                        finishEvent.Set();
+                    }
+                    continue;
+                }
+                var frag = new FragmentIn();
+                
+                frag.pixelx = m;
+                frag.pixely = n;
+                
+                ThreadPool.QueueUserWorkItem(arg => {
+                    ThreadLerpFragment(frag);
+                    if (Interlocked.Decrement(ref threadCount) == 0) {
+                        finishEvent.Set();
+                    }
+                });
+                fragCount++;
+            }
+        }
+
+        finishEvent.WaitOne();
+
+        return fragCount;
     }
 
     public bool isLeftPoint(Vector4 a, Vector4 b, float x, float y) {
@@ -202,5 +257,50 @@ public partial class SoftRender {
         ret.color = v2.color * u + v3.color * v + v1.color * w;
 
         return true;
+    }
+
+    // 基于三角形面积做插值
+    void ThreadLerpFragment(object a) {
+        var frag = a as FragmentIn;
+
+        var v1 = GLOBAL_PARALL_V1;
+        var v2 = GLOBAL_PARALL_V2;
+        var v3 = GLOBAL_PARALL_V3;
+        var v0 = new Vector4(frag.pixelx, frag.pixely);
+        var d01 = v0 - v1.vertex;
+
+        var d21 = v2.vertex - v1.vertex;
+        var d31 = v3.vertex - v1.vertex;
+
+        var denom = Mathf.Abs(d21.x * d31.y - d21.y * d31.x);
+
+        if (denom < 0.000001) {
+            return;
+        }
+
+        var u = Mathf.Abs(d01.x * d31.y - d01.y * d31.x) / denom; // close to v2
+        var v = Mathf.Abs(d01.x * d21.y - d01.y * d21.x) / denom; // close to v3
+        var w = 1 - u - v; // close to v1
+
+        // do lerp
+        frag.vertex = v2.vertex * u + v3.vertex * v + v1.vertex * w;
+        frag.normal = v2.normal * u + v3.normal * v + v1.normal * w;
+        frag.worldPos = v2.worldPos * u + v3.worldPos * v + v1.worldPos * w;
+        frag.uv = v2.uv * u + v3.uv * v + v1.uv * w;
+        frag.color = v2.color * u + v3.color * v + v1.color * w;
+
+        var old_depth = depthBuffer[frag.pixelx, frag.pixely];
+        // do early z
+        if (frag.vertex.z > old_depth && old_depth > 0) {
+            EarlyZCount++;
+        };
+
+        Color color = Frag(frag);
+
+        DrawPixel(frag.pixelx, frag.pixely, ref color);
+        depthBuffer[frag.pixelx, frag.pixely] = frag.vertex.z;
+
+
+        return;
     }
 }
