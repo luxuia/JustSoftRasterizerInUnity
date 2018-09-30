@@ -9,15 +9,7 @@ public partial class SoftRender {
     public float[,] depthBuffer; // depth buffer
     public Camera camera;
 
-    Matrix4x4 WorldMat;
-    Matrix4x4 WorldInvTMat;
-    Matrix4x4 MVPMat;
-
-
     List<FragmentIn> vertexList;
-    List<FragmentIn> fragList;
-
-    Light[] lights;
 
     public Vector2 ClipLowLeft = new Vector2(10, 10);
     public Vector2 ClipUpRight;
@@ -33,14 +25,15 @@ public partial class SoftRender {
         ClipUpRight = new Vector2(texture.width - 10, texture.height - 10);
 
         vertexList = new List<FragmentIn>();
-        fragList = new List<FragmentIn>();
 
         width = texture.width;
         height = texture.height;
 
         depthBuffer = new float[width, height];
 
-        lights = GameObject.FindObjectsOfType<Light>();
+        ShaderGlobal.lights = GameObject.FindObjectsOfType<Light>();
+        if (camera)
+            ShaderGlobal.CameraPos = camera.transform.position;
     }
 
     #region draw2d
@@ -265,9 +258,9 @@ public partial class SoftRender {
         foreach (var mesh in meshs) {
             var m = mesh.sharedMesh;
             if (m) {
-                WorldMat = mesh.transform.localToWorldMatrix;
-                WorldInvTMat = WorldMat.inverse.transpose;
-                MVPMat = camera.projectionMatrix * camera.worldToCameraMatrix * WorldMat;
+                ShaderGlobal.l2wMat = mesh.transform.localToWorldMatrix;
+                ShaderGlobal.l2wInvTMat = ShaderGlobal.l2wMat.inverse.transpose;
+                ShaderGlobal.MVPMat = camera.projectionMatrix * camera.worldToCameraMatrix * ShaderGlobal.l2wMat;
                 var vao = new VAO(m);
 
                 DrawElement(vao);
@@ -283,37 +276,62 @@ public partial class SoftRender {
         ClipCoord();
 
         // NDC，viewport transform
-        NDCCoord();
+        // 改成在RunVertexShader里算，方便做剔除
+        //NDCCoord();
 
         //用indices装配三角形
         SetupTriangles();
 
         RunFragmentShader();
+
+        vertexList.Clear();
     }
 
     void RunVertexShader(VAO vao) {
-        for (int i = 0; i < vao.vbo.Length; ++i) {
-            var vertexOut = Vert(vao.vbo[i]);
-            vertexList.Add(vertexOut);
+        for (int i = 0; i < vao.vbo.Length; ) {
+
+            var v0 = Vert(vao.vbo[i]);
+            var v1 = Vert(vao.vbo[i+1]);
+            var v2 = Vert(vao.vbo[i+2]);
+            DoNDCCoord(v0);
+            DoNDCCoord(v1);
+            DoNDCCoord(v2);
+
+            var d01 = v1.vertex - v0.vertex;
+            var d02 = v2.vertex - v0.vertex;
+            // 顺便 背面剔除 backface culling
+            var dimen = d01.x * d02.y - d01.y * d02.x;
+
+            if (dimen < 0) {
+                vertexList.Add(v0);
+                vertexList.Add(v1);
+                vertexList.Add(v2);
+            }
+            i += 3;
         }
     }
 
     void ClipCoord() {
+
         // TODO 三角形裁剪
+    }
+
+    void DoNDCCoord(FragmentIn frag) {
+        var projectv = frag.vertex;
+        // 转换到NDC空间，再到viewport空间
+        projectv.x = (projectv.x / projectv.w / 2 + 0.5f) * width;
+        projectv.y = (projectv.y / projectv.w / 2 + 0.5f) * height;
+        projectv.z = (projectv.z / projectv.w + 0.5f);
+
+        frag.vertex = projectv;
+
+        frag.pixelx = (int)projectv.x;
+        frag.pixely = (int)projectv.y;
     }
 
     void NDCCoord() {
         foreach (var vert in vertexList) {
-            var projectv = vert.vertex;
-            // 转换到NDC空间，再到viewport空间
-            projectv.x = (projectv.x / projectv.w / 2 + 0.5f) * width;
-            projectv.y = (projectv.y / projectv.w / 2 + 0.5f) * height;
-            projectv.z = (projectv.z / projectv.w + 0.5f);
-
-            vert.vertex = projectv;
-
-            vert.pixelx = (int)projectv.x;
-            vert.pixely = (int)projectv.y;
+            DoNDCCoord(vert);
         }
     }
 
@@ -322,8 +340,12 @@ public partial class SoftRender {
     }
 
     void RunFragmentShader() {
+        VertexCount = vertexList.Count;
+
         for (int i =0; i<vertexList.Count;) {
             var frags = Rast(vertexList[i], vertexList[i+1], vertexList[i+2]);
+
+            FragmentCount += frags.Count;
 
             foreach (var frag in frags) {
                 if (frag.pixelx >= width || frag.pixely >= height) {
@@ -331,12 +353,16 @@ public partial class SoftRender {
                 }
                 var old_depth = depthBuffer[frag.pixelx, frag.pixely];
                 // do early z
-                if (frag.vertex.z > old_depth && old_depth > 0) continue;
+                if (frag.vertex.z > old_depth && old_depth > 0) {
+                    EarlyZCount++;
+                };
 
                 Color color = Frag(frag);
 
                 DrawPixel(frag.pixelx, frag.pixely, ref color);
                 depthBuffer[frag.pixelx, frag.pixely] = frag.vertex.z;
+
+                FinalWriteCount++;
             }
             i += 3;
         }

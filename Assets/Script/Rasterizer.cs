@@ -30,7 +30,7 @@ public partial class SoftRender {
         return fragList;
     }
 
-    public bool isLeftPoint(Vector3 a, Vector3 b, float x, float y) {
+    public bool isLeftPoint(Vector4 a, Vector4 b, float x, float y) {
         float s = (a.x - x) * (b.y - y) - (a.y - y) * (b.x - x);
         return s > 0 ? false : true;
     }

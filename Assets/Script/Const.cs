@@ -22,20 +22,26 @@ public partial class SoftRender {
         public VertexIn[] vbo;
 
         public VAO(Mesh mesh) {
-            vbo = new VertexIn[mesh.triangles.Length];
+            var triangles = mesh.triangles;
+            var vertices = mesh.vertices;
+            var normals = mesh.normals;
+            var uvs = mesh.uv;
 
-            Color color = new Color(Random.value, Random.value, Random.value);
-            for (int i = 0; i < mesh.triangles.Length/3; ++i) {
+            vbo = new VertexIn[triangles.Length];
+
+            Color color = Color.white;
+           
+            for (int i = 0; i < triangles.Length/3; ++i) {
 
                 for (int j = 0; j < 3; ++j) {
                     var v = new VertexIn();
 
-                    var idx = mesh.triangles[i*3+j];
+                    var idx = triangles[i*3+j];
 
-                    v.pos = mesh.vertices[idx];
-                    v.normal = mesh.normals[idx];
-                    v.uv = mesh.uv[idx];
-                    v.color = Color.white;
+                    v.pos = vertices[idx];
+                    v.normal = normals[idx];
+                    v.uv = uvs[idx];
+                    v.color = color;
 
                     vbo[i*3+j] = v;
                 }
