@@ -53,6 +53,20 @@ public partial class SoftRender {
         
         var finishEvent = new ManualResetEvent(false);
 
+        ThreadPool.SetMaxThreads(20, 20);
+        ThreadPool.SetMinThreads(5, 5);
+
+        WaitCallback cb = (arg) => {
+            var fraglist = arg as List<FragmentIn>;
+            for (int i = 0; i < fraglist.Count; ++i) {
+                ThreadLerpFragment(fraglist[i]);
+            }
+            if (Interlocked.Add(ref threadCount, -fraglist.Count) == 0) {
+                finishEvent.Set();
+            };
+        };
+
+        List<FragmentIn> frags = new List<FragmentIn>(50);
         for (int m = xMin; m < xMax + 1; m++) {
             for (int n = yMin; n < yMax + 1; n++) {
                 if ((m < 0 || m > width - 1 || n < 0 || n > height - 1) ||
@@ -66,18 +80,25 @@ public partial class SoftRender {
                     continue;
                 }
                 var frag = new FragmentIn();
-                
+
                 frag.pixelx = m;
                 frag.pixely = n;
+
+                frags.Add(frag);
+
+                // 最好情况应该是一个线程一个work，让每个线程的工作多一些。
+                // 一个每个frag都单独创建线程，创建的开销太大
+                if (frags.Count > 100) {
+                    ThreadPool.QueueUserWorkItem(cb, frags);
+
+                    frags = new List<FragmentIn>();
+                }
                 
-                ThreadPool.QueueUserWorkItem(arg => {
-                    ThreadLerpFragment(frag);
-                    if (Interlocked.Decrement(ref threadCount) == 0) {
-                        finishEvent.Set();
-                    }
-                });
                 fragCount++;
             }
+        }
+        if (frags.Count > 0) {
+            ThreadPool.QueueUserWorkItem(cb, frags);
         }
 
         finishEvent.WaitOne();
@@ -231,6 +252,19 @@ public partial class SoftRender {
     }
     */
 
+    void RealDoFragment(FragmentIn frag) {
+        var old_depth = depthBuffer[frag.pixelx, frag.pixely];
+        // do early z
+        if (frag.vertex.z > old_depth && old_depth > 0) {
+            EarlyZCount++;
+        };
+
+        Color color = Frag(frag);
+
+        DrawPixel(frag.pixelx, frag.pixely, ref color);
+        depthBuffer[frag.pixelx, frag.pixely] = frag.vertex.z;
+    }
+
     // 基于三角形面积做插值
     bool LerpFragment(FragmentIn v1, FragmentIn v2, FragmentIn v3, FragmentIn ret) {
         var v0 = new Vector4(ret.pixelx, ret.pixely);
@@ -260,9 +294,7 @@ public partial class SoftRender {
     }
 
     // 基于三角形面积做插值
-    void ThreadLerpFragment(object a) {
-        var frag = a as FragmentIn;
-
+    void ThreadLerpFragment(FragmentIn frag) {
         var v1 = GLOBAL_PARALL_V1;
         var v2 = GLOBAL_PARALL_V2;
         var v3 = GLOBAL_PARALL_V3;
@@ -273,7 +305,7 @@ public partial class SoftRender {
         var d31 = v3.vertex - v1.vertex;
 
         var denom = Mathf.Abs(d21.x * d31.y - d21.y * d31.x);
-
+        
         if (denom < 0.000001) {
             return;
         }
@@ -288,18 +320,8 @@ public partial class SoftRender {
         frag.worldPos = v2.worldPos * u + v3.worldPos * v + v1.worldPos * w;
         frag.uv = v2.uv * u + v3.uv * v + v1.uv * w;
         frag.color = v2.color * u + v3.color * v + v1.color * w;
-
-        var old_depth = depthBuffer[frag.pixelx, frag.pixely];
-        // do early z
-        if (frag.vertex.z > old_depth && old_depth > 0) {
-            EarlyZCount++;
-        };
-
-        Color color = Frag(frag);
-
-        DrawPixel(frag.pixelx, frag.pixely, ref color);
-        depthBuffer[frag.pixelx, frag.pixely] = frag.vertex.z;
-
+        
+        RealDoFragment(frag);
 
         return;
     }

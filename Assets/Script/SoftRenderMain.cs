@@ -4,6 +4,7 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using System.Linq;
+using System;
 
 
 
@@ -23,6 +24,12 @@ public partial class SoftRender {
     int height;
 
 	public SoftRender(Texture2D texture, Camera camera) {
+        Reset(texture, camera);
+    }
+
+    public void Reset(Texture2D texture, Camera camera) {
+        ClearStatistic();
+
         this.texture = texture;
 
         this.camera = camera;
@@ -34,10 +41,20 @@ public partial class SoftRender {
         width = texture.width;
         height = texture.height;
 
-        depthBuffer = new float[width, height];
-        colorBuffer = new Color[width * height];
+        if (depthBuffer != null && depthBuffer.GetLength(0) == width && depthBuffer.GetLength(1) == height) {
+            Array.Clear(depthBuffer, 0, width * height);
+        }
+        else {
+            depthBuffer = new float[width, height];
+        }
+        if (colorBuffer != null && colorBuffer.Length == width*height) {
+            Array.Clear(colorBuffer, 0, width * height);
+        }
+        else {
+            colorBuffer = new Color[width * height];
+        }
         var grey = new Color(0.1f, 0.1f, 0.1f, 0.1f);
-        for (var i = 0; i < width*height;++i) {
+        for (var i = 0; i < width * height; ++i) {
             colorBuffer[i] = grey;
         }
 
@@ -59,6 +76,7 @@ public partial class SoftRender {
         if (camera)
             ShaderGlobal.CameraPos = camera.transform.position;
     }
+
     void DrawPixel(int x, int y, ref Color color) {
         colorBuffer[x+ y*width] = color;
     }
@@ -366,7 +384,7 @@ public partial class SoftRender {
     }
 
     void RunFragmentShader() {
-        VertexCount = vertexList.Count;
+        VertexCount += vertexList.Count;
 
         for (int i =0; i<vertexList.Count;) {
 

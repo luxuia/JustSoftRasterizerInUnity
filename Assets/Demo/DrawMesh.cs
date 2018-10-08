@@ -6,21 +6,27 @@ using UnityEngine.UI;
 public class DrawMesh : MonoBehaviour {
 
     public Text DebugInfo;
-    
-    void Update() {
+
+    SoftRender render;
+
+    void Awake() {
         var image = GetComponent<RawImage>();
         var texture = new Texture2D((int)image.rectTransform.sizeDelta.x, (int)image.rectTransform.sizeDelta.y);
         image.texture = texture;
 
-        var raster = new SoftRender(texture, Camera.main);
+        render = new SoftRender(texture, Camera.main);
+    }
+    
+    void Update() {
+        render.Reset(render.texture, Camera.main);
 
-        raster.DrawFrame();
+        render.DrawFrame();
 
         DebugInfo.text = string.Format(@"vertex count {0}
 fragment count {1}
 early-z  count {2}
-final-write count {3}", raster.VertexCount, raster.FragmentCount, raster.EarlyZCount, raster.FinalWriteCount);
+final-write count {3}", render.VertexCount, render.FragmentCount, render.EarlyZCount, render.FinalWriteCount);
 
-        texture.Apply();
+        render.texture.Apply();
     }
 }
