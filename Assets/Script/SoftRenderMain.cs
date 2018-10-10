@@ -306,6 +306,15 @@ public partial class SoftRender {
                 ShaderGlobal.MVPMat = camera.projectionMatrix * camera.worldToCameraMatrix * ShaderGlobal.l2wMat;
                 var vao = new VAO(m);
 
+                var mat = mesh.gameObject.GetComponent<Renderer>().sharedMaterial;
+                if (mat != null && mat.mainTexture is Texture2D) {
+                    ShaderGlobal.MainTex = (mat.mainTexture as Texture2D).GetPixels();
+                    ShaderGlobal.MainTexW = mat.mainTexture.width;
+                    ShaderGlobal.MainTexH = mat.mainTexture.height;
+                } else {
+                    ShaderGlobal.MainTex = null;
+                }
+
                 DrawElement(vao);
             }
         }
@@ -371,6 +380,10 @@ public partial class SoftRender {
 
         frag.pixelx = (int)projectv.x;
         frag.pixely = (int)projectv.y;
+
+        // 透视除法矫正,见Rasterizer步骤
+        frag.uv.x /= projectv.w;
+        frag.uv.y /= projectv.w;
     }
 
     void NDCCoord() {

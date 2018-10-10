@@ -20,7 +20,9 @@ public partial class SoftRender {
     }
 
     public Color Frag(FragmentIn v) {
-        var color = ShaderGlobal.Ambient;
+        //return new Color(v.uv.x, v.uv.y, v.uv.x);
+
+        var color = ShaderGlobal.Ambient * v.color;
         Vector3 dir; // 光线的反方向
         float intensity; //光线强度
         Vector3 viewdir = (ShaderGlobal.CameraPos - v.worldPos).normalized;
@@ -55,7 +57,7 @@ public partial class SoftRender {
             float nh = Vector3.Dot(h, v.normal);
             float spec = Mathf.Pow(nh, ShaderGlobal.Specular);
 
-            color += (ShaderGlobal.Albedo * light.color * diff + ShaderGlobal.SpecularColor * light.color * spec)*intensity;
+            color += (v.color * light.color * diff + ShaderGlobal.SpecularColor * light.color * spec)*intensity;
       }
 
         return color;

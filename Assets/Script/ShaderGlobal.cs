@@ -9,12 +9,13 @@ public static class ShaderGlobal {
     public static Matrix4x4 MVPMat;
     public static Vector3 CameraPos;
 
-    public static Texture2D MainTex;
+    public static Color[] MainTex;
+    public static int MainTexW, MainTexH;
 
     //漫反射光
-    public static Color Albedo = Color.yellow;
-    public static Color SpecularColor = Color.blue;
-    public static float Specular = 4f;
+    public static Color Albedo = Color.white;
+    public static Color SpecularColor = Color.white;
+    public static float Specular = 64f;
 
     //环境光
     public static Color Ambient = Color.gray;

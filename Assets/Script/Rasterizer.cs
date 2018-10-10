@@ -2,10 +2,13 @@
 using System.Collections.Generic;
 using UnityEngine;
 using System.Threading;
+using UnityEngine.Profiling;
 
 public partial class SoftRender {
 
     public FragmentIn GLOBAL_PARALL_V1, GLOBAL_PARALL_V2, GLOBAL_PARALL_V3;
+
+    const int FragCountPerThread = 200;
 
     public List<FragmentIn> Rast(FragmentIn v1, FragmentIn v2, FragmentIn v3) {
         var p1 = v1.vertex;
@@ -58,15 +61,18 @@ public partial class SoftRender {
 
         WaitCallback cb = (arg) => {
             var fraglist = arg as List<FragmentIn>;
+            //Profiler.BeginThreadProfiling("my thread ", "thread ");
             for (int i = 0; i < fraglist.Count; ++i) {
                 ThreadLerpFragment(fraglist[i]);
             }
+
+            //Profiler.EndThreadProfiling();
             if (Interlocked.Add(ref threadCount, -fraglist.Count) == 0) {
                 finishEvent.Set();
             };
         };
 
-        List<FragmentIn> frags = new List<FragmentIn>(50);
+        List<FragmentIn> frags = new List<FragmentIn>(FragCountPerThread);
         for (int m = xMin; m < xMax + 1; m++) {
             for (int n = yMin; n < yMax + 1; n++) {
                 if ((m < 0 || m > width - 1 || n < 0 || n > height - 1) ||
@@ -88,7 +94,7 @@ public partial class SoftRender {
 
                 // 最好情况应该是一个线程一个work，让每个线程的工作多一些。
                 // 一个每个frag都单独创建线程，创建的开销太大
-                if (frags.Count > 100) {
+                if (frags.Count > FragCountPerThread) {
                     ThreadPool.QueueUserWorkItem(cb, frags);
 
                     frags = new List<FragmentIn>();
@@ -295,6 +301,8 @@ public partial class SoftRender {
 
     // 基于三角形面积做插值
     void ThreadLerpFragment(FragmentIn frag) {
+        
+
         var v1 = GLOBAL_PARALL_V1;
         var v2 = GLOBAL_PARALL_V2;
         var v3 = GLOBAL_PARALL_V3;
@@ -320,7 +328,24 @@ public partial class SoftRender {
         frag.worldPos = v2.worldPos * u + v3.worldPos * v + v1.worldPos * w;
         frag.uv = v2.uv * u + v3.uv * v + v1.uv * w;
         frag.color = v2.color * u + v3.color * v + v1.color * w;
-        
+
+        //透视除法矫正
+        // 坐标vertex值通过mvp变换+除w后变成了屏幕空间坐标，可以自然插值
+        // uv也需要转换到屏幕空间
+        // 参考: https://www.zhihu.com/question/40624282, http://imgtec.eetrend.com/d6-imgtec/article/2014-04/1940.html, 
+        float invw = 1/(1/v1.vertex.w * w + 1/v2.vertex.w * u + 1/v3.vertex.w * v);
+        frag.uv *= invw;
+        frag.color *= invw;
+
+        var maintex = ShaderGlobal.MainTex;
+        if (maintex != null) {
+            int addr = (int)(frag.uv.x * ShaderGlobal.MainTexW + (int)(frag.uv.y * ShaderGlobal.MainTexH) * ShaderGlobal.MainTexW);
+            addr = Mathf.Clamp(addr, 0, maintex.Length - 1);
+            frag.color = maintex[addr];
+        } else {
+            frag.color = ShaderGlobal.Albedo;
+        }
+
         RealDoFragment(frag);
 
         return;

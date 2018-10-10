@@ -20,7 +20,7 @@ public partial class SoftRender {
 
     public class VAO {
         public VertexIn[] vbo;
-
+        
         public VAO(Mesh mesh) {
             var triangles = mesh.triangles;
             var vertices = mesh.vertices;
