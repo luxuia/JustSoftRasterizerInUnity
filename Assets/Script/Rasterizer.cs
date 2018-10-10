@@ -10,10 +10,16 @@ public partial class SoftRender {
 
     const int FragCountPerThread = 200;
 
-    public List<FragmentIn> Rast(FragmentIn v1, FragmentIn v2, FragmentIn v3) {
+    public int Rast(FragmentIn v1, FragmentIn v2, FragmentIn v3) {
         var p1 = v1.vertex;
         var p2 = v2.vertex;
         var p3 = v3.vertex;
+
+        GLOBAL_PARALL_V1 = v1;
+        GLOBAL_PARALL_V2 = v2;
+        GLOBAL_PARALL_V3 = v3;
+
+        var fragCount = 0;
 
         int xMin = (int)Mathf.Min(p1.x, p2.x, p3.x);
         int xMax = (int)Mathf.Max(p1.x, p2.x, p3.x);
@@ -29,11 +35,12 @@ public partial class SoftRender {
                 var frag = new FragmentIn();
                 frag.pixelx = m;
                 frag.pixely = n;
-                LerpFragment(v1, v2, v3, frag);
-                fragList.Add(frag);
+                ThreadLerpFragment(frag);
+
+                fragCount++;
             }
         }
-        return fragList;
+        return fragCount;
     }
 
     public int ParallRast(FragmentIn v1, FragmentIn v2, FragmentIn v3) {
@@ -272,34 +279,6 @@ public partial class SoftRender {
     }
 
     // 基于三角形面积做插值
-    bool LerpFragment(FragmentIn v1, FragmentIn v2, FragmentIn v3, FragmentIn ret) {
-        var v0 = new Vector4(ret.pixelx, ret.pixely);
-        var d01 = v0 - v1.vertex;
-
-        var d21 = v2.vertex - v1.vertex;
-        var d31 = v3.vertex - v1.vertex;
-
-        var denom = Mathf.Abs(d21.x * d31.y - d21.y * d31.x);
-
-        if (denom < 0.000001) {
-            return false;
-        }
-
-        var u = Mathf.Abs(d01.x * d31.y - d01.y * d31.x) / denom; // close to v2
-        var v = Mathf.Abs(d01.x * d21.y - d01.y * d21.x) / denom; // close to v3
-        var w = 1 - u - v; // close to v1
-
-        // do lerp
-        ret.vertex = v2.vertex * u + v3.vertex * v + v1.vertex * w;
-        ret.normal = v2.normal * u + v3.normal * v + v1.normal * w;
-        ret.worldPos = v2.worldPos * u + v3.worldPos * v + v1.worldPos * w;
-        ret.uv = v2.uv * u + v3.uv * v + v1.uv * w;
-        ret.color = v2.color * u + v3.color * v + v1.color * w;
-
-        return true;
-    }
-
-    // 基于三角形面积做插值
     void ThreadLerpFragment(FragmentIn frag) {
         
 
@@ -339,10 +318,32 @@ public partial class SoftRender {
 
         var maintex = ShaderGlobal.MainTex;
         if (maintex != null) {
-            int addr = (int)(frag.uv.x * ShaderGlobal.MainTexW + (int)(frag.uv.y * ShaderGlobal.MainTexH) * ShaderGlobal.MainTexW);
-            addr = Mathf.Clamp(addr, 0, maintex.Length - 1);
-            frag.color = maintex[addr];
-        } else {
+            // 线性过滤
+            float fu = frag.uv.x * ShaderGlobal.MainTexW;
+            fu = Mathf.Clamp(fu, 0, ShaderGlobal.MainTexW - 1);
+            int iu = (int)fu;
+            float fv = frag.uv.y * ShaderGlobal.MainTexH;
+            fv = Mathf.Clamp(fv, 0, ShaderGlobal.MainTexW - 1);
+            int iv = (int)fv;
+
+            int inu = Mathf.Clamp(iu + 1, 0, ShaderGlobal.MainTexW - 1);
+            int inv = Mathf.Clamp(iv + 1, 0, ShaderGlobal.MainTexH - 1);
+
+            float du = fu - iu;
+            float dv = fv - iv;
+            float areauv = du * dv;
+            float areaunv = du * (1 - dv);
+            float areanuv = (1 - du) * dv;
+            float areanunv = (1 - du) * (1 - dv);
+
+            frag.color = maintex[iu+iv*ShaderGlobal.MainTexW] * areanunv  
+                + maintex[inu + iv * ShaderGlobal.MainTexW] * areaunv  
+                + maintex[iu + inv * ShaderGlobal.MainTexW] * areanuv
+                + maintex[inu + inv * ShaderGlobal.MainTexW] * areauv;
+
+            //TODO 各向异性过滤，根据uv的比例关系，Paper:Implementing an anisotropic texture filter
+        }
+        else {
             frag.color = ShaderGlobal.Albedo;
         }
 

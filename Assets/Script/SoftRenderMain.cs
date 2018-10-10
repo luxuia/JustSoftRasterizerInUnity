@@ -401,32 +401,14 @@ public partial class SoftRender {
 
         for (int i =0; i<vertexList.Count;) {
 
-#if USE_PARALLER
+#if false&&USE_PARALLER
             var fragcount = ParallRast(vertexList[i], vertexList[i + 1], vertexList[i + 2]);
 
             FragmentCount += fragcount;
 #else
-            var frags = Rast(vertexList[i], vertexList[i + 1], vertexList[i + 2]);
+            var fragcount = Rast(vertexList[i], vertexList[i + 1], vertexList[i + 2]);
 
-            FragmentCount += frags.Count;
-
-            foreach (var frag in frags) {
-                 if (frag.pixelx >= width || frag.pixely >= height) {
-                     continue;
-                 }
-                 var old_depth = depthBuffer[frag.pixelx, frag.pixely];
-                 // do early z
-                 if (frag.vertex.z > old_depth && old_depth > 0) {
-                     EarlyZCount++;
-                 };
- 
-                 Color color = Frag(frag);
- 
-                 DrawPixel(frag.pixelx, frag.pixely, ref color);
-                 depthBuffer[frag.pixelx, frag.pixely] = frag.vertex.z;
-
-                FinalWriteCount++;
-            }
+            FragmentCount += fragcount;
 #endif
             i += 3;
         }
