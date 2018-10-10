@@ -93,6 +93,8 @@ public partial class SoftRender {
         //正常shader里没有这个，为了方便操作
         public int pixelx;
         public int pixely;
+
+        public bool has_ndc = false;
     }
 
     public class LightData {

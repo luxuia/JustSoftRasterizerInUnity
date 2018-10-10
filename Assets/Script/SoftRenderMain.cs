@@ -1,5 +1,5 @@
 ﻿//#define USE_PARALLER
-//#define DRAW_WIREFRAME
+#define DRAW_WIREFRAME
 
 using System.Collections;
 using System.Collections.Generic;
@@ -24,16 +24,26 @@ public partial class SoftRender {
     int width;
     int height;
 
-	public SoftRender(Texture2D texture, Camera camera) {
-        Reset(texture, camera);
+    bool multiThread = false;
+    bool wireFrame = false;
+
+    Plane[] ClipPlanes = new Plane[] { new Plane( Vector3.forward, 1), new Plane(Vector3.back, 1),
+                        new Plane(Vector3.left, 1), new Plane(Vector3.right, 1),
+                        new Plane(Vector3.up, 1), new Plane(Vector3.down, 1)};
+
+	public SoftRender(Texture2D texture, Camera camera, bool multiThread, bool wireFrame) {
+        Reset(texture, camera, multiThread, wireFrame);
     }
 
-    public void Reset(Texture2D texture, Camera camera) {
+    public void Reset(Texture2D texture, Camera camera, bool multiThread, bool wireFrame) {
         ClearStatistic();
 
         this.texture = texture;
 
         this.camera = camera;
+
+        this.multiThread = multiThread;
+        this.wireFrame = wireFrame;
 
         ClipUpRight = new Vector2(texture.width - 10, texture.height - 10);
 
@@ -86,10 +96,10 @@ public partial class SoftRender {
     #region draw2d
     //Bresenham Alg
     public void DrawLine(VertexIn start, VertexIn end, ref Color color) {
-        //裁剪不可见的线
-        if (!CohenSutherlandLineClip(ref start.pos, ref end.pos, ClipLowLeft, ClipUpRight)) {
-            return;
-        }
+       // //裁剪不可见的线
+       // if (!CohenSutherlandLineClip(ref start.pos, ref end.pos, ClipLowLeft, ClipUpRight)) {
+       //     return;
+       // }
 
         int x0 = (int)start.pos.x;
         int x1 = (int)end.pos.x;
@@ -297,17 +307,25 @@ public partial class SoftRender {
 
     #region draw3d
     public void DrawFrame() {
-        var meshs = GameObject.FindObjectsOfType<MeshFilter>();
+        var renders = GameObject.FindObjectsOfType<Renderer>();
 
-        foreach (var mesh in meshs) {
-            var m = mesh.sharedMesh;
-            if (m) {
-                ShaderGlobal.l2wMat = mesh.transform.localToWorldMatrix;
+        foreach (var render in renders) {
+            Mesh mesh = null;
+            if (render is SkinnedMeshRenderer) {
+                mesh = (render as SkinnedMeshRenderer).sharedMesh;
+            } else {
+                var filter = render.gameObject.GetComponent<MeshFilter>();
+                if (filter != null) {
+                    mesh = filter.sharedMesh;
+                }
+            }
+            if (mesh && render && render.enabled) {
+                ShaderGlobal.l2wMat = render.transform.localToWorldMatrix;
                 ShaderGlobal.l2wInvTMat = ShaderGlobal.l2wMat.inverse.transpose;
                 ShaderGlobal.MVPMat = camera.projectionMatrix * camera.worldToCameraMatrix * ShaderGlobal.l2wMat;
-                var vao = new VAO(m);
+                var vao = new VAO(mesh);
 
-                var mat = mesh.gameObject.GetComponent<Renderer>().sharedMaterial;
+                var mat = render.sharedMaterial;
                 if (mat != null && mat.mainTexture is Texture2D) {
                     ShaderGlobal.MainTex = (mat.mainTexture as Texture2D).GetPixels();
                     ShaderGlobal.MainTexW = mat.mainTexture.width;
@@ -327,7 +345,7 @@ public partial class SoftRender {
         RunVertexShader(vao);
 
         //裁剪掉在view frustrum plane外的三角形、可能会生成新的
-        ClipCoord();
+        //ClipCoord();
 
         // NDC，viewport transform
         // 改成在RunVertexShader里算，方便做剔除
@@ -342,40 +360,128 @@ public partial class SoftRender {
     }
 
     void RunVertexShader(VAO vao) {
+        List<FragmentIn> list = new List<FragmentIn>();
+        List<FragmentIn> new_list = new List<FragmentIn>();
         for (int i = 0; i < vao.vbo.Length; ) {
 
             var v0 = Vert(vao.vbo[i]);
             var v1 = Vert(vao.vbo[i+1]);
             var v2 = Vert(vao.vbo[i+2]);
-            DoNDCCoord(v0);
-            DoNDCCoord(v1);
-            DoNDCCoord(v2);
 
-            var d01 = v1.vertex - v0.vertex;
-            var d02 = v2.vertex - v0.vertex;
-            // 顺便 背面剔除 backface culling
-            var dimen = d01.x * d02.y - d01.y * d02.x;
+            DoCVVCoord(v0);
+            DoCVVCoord(v1);
+            DoCVVCoord(v2);
 
-            if (dimen < 0) {
-                vertexList.Add(v0);
-                vertexList.Add(v1);
-                vertexList.Add(v2);
+            list.Add(v0);
+            list.Add(v1);
+            list.Add(v2);
+
+            foreach (var plane in ClipPlanes) {
+                DoClipPlane(list, new_list, plane);
+                Swap(ref list, ref new_list);
+                new_list.Clear();
             }
+
+            for (int j = 0; j < list.Count; j += 3) {
+                v0 = list[j];
+                v1 = list[j + 1];
+                v2 = list[j + 2];
+
+                DoNDCCoord(v0);
+                DoNDCCoord(v1);
+                DoNDCCoord(v2);
+
+                var d01 = v1.vertex - v0.vertex;
+                var d02 = v2.vertex - v0.vertex;
+                // 顺便 背面剔除 backface culling
+                var dimen = d01.x * d02.y - d01.y * d02.x;
+
+                if (dimen < 0) {
+                    vertexList.Add(v0);
+                    vertexList.Add(v1);
+                    vertexList.Add(v2);
+                }
+            }
+            list.Clear();
             i += 3;
         }
     }
 
-    void ClipCoord() {
+    FragmentIn ClipLerpFragment(FragmentIn v1, FragmentIn v2, float lerp) {
+        var ret = new FragmentIn();
+        ret.vertex = Vector4.Lerp(v1.vertex, v2.vertex, lerp);
+        ret.uv = Vector2.Lerp(v1.uv, v2.uv, lerp);
+        ret.color = Color.Lerp(v1.color, v2.color, lerp);
+        ret.normal = v1.normal;
+        ret.worldPos = Vector3.Lerp(v1.worldPos, v2.worldPos, lerp);
 
-        // TODO 三角形裁剪
+        return ret;
+    }
+
+    void DoClipPlane(List<FragmentIn> list, List<FragmentIn> new_list, Plane plane) {
+        for (int i = 0; i < list.Count;i+=3) {
+
+            var v1 = list[i];
+            var v2 = list[i + 1];
+            var v3 = list[i + 2];
+            float d1 = plane.GetDistanceToPoint(v1.vertex);
+            float d2 = plane.GetDistanceToPoint(v2.vertex);
+            float d3 = plane.GetDistanceToPoint(v3.vertex);
+            float[] ds = new float[] { d1, d2, d3, d1, d2 };
+            FragmentIn[] vs = new FragmentIn[] { v1, v2, v3, v1, v2 };
+
+            //完全在cvv内
+            if (d1 >= 0 && d2 >= 0 &&d3 >= 0) {
+                new_list.Add(list[i]);
+                new_list.Add(list[i+1]);
+                new_list.Add(list[i+2]);
+            }
+            else {
+                // 枚举1,2,3 | 2,3,1 | 3,1,2这三种情况
+                for (int j = 0; j < 3; ++j) {
+                    if (ds[j] < 0 && ds[j+1] > 0 && ds[j+2] > 0) {
+                        var new12 = ClipLerpFragment(vs[j], vs[j+1], ds[j] / (ds[j] - ds[j+1]));
+                        var new13 = ClipLerpFragment(vs[j], vs[j+2], ds[j] / (ds[j] - ds[j+2]));
+
+                        new_list.Add(new12);
+                        new_list.Add(vs[j+1]);
+                        new_list.Add(new13);
+
+                        new_list.Add(new13);
+                        new_list.Add(vs[j+1]);
+                        new_list.Add(vs[j+2]);
+                    } else if (ds[j] > 0 && ds[j+1] < 0 && ds[j+2] < 0) {
+                        var new12 = ClipLerpFragment(vs[j], vs[j+1], ds[j] / (ds[j] - ds[j+1]));
+                        var new13 = ClipLerpFragment(vs[j], vs[j+2], ds[j] / (ds[j] - ds[j+2]));
+
+                        new_list.Add(vs[j]);
+                        new_list.Add(new12);
+                        new_list.Add(new13);
+                    }
+                }
+            }
+        }
+    }
+
+    void DoCVVCoord(FragmentIn frag) {
+        var projectv = frag.vertex;
+        // 转换到CVV好裁剪
+        projectv.x = projectv.x / projectv.w; 
+        projectv.y = projectv.y / projectv.w;
+        projectv.z = projectv.z / projectv.w;
+
+        frag.vertex = projectv;
     }
 
     void DoNDCCoord(FragmentIn frag) {
+        // 会有frag共用的情况
+        if (frag.has_ndc) return;
+
         var projectv = frag.vertex;
         // 转换到NDC空间，再到viewport空间
-        projectv.x = (projectv.x / projectv.w / 2 + 0.5f) * width;
-        projectv.y = (projectv.y / projectv.w / 2 + 0.5f) * height;
-        projectv.z = (projectv.z / projectv.w + 0.5f);
+        projectv.x = (projectv.x / 2 + 0.5f) * width;
+        projectv.y = (projectv.y / 2 + 0.5f) * height;
+        projectv.z = (projectv.z + 0.5f);
 
         frag.vertex = projectv;
 
@@ -385,6 +491,7 @@ public partial class SoftRender {
         // 透视除法矫正,见Rasterizer步骤
         frag.uv.x /= projectv.w;
         frag.uv.y /= projectv.w;
+        frag.has_ndc = true;
     }
 
     void NDCCoord() {
@@ -402,19 +509,21 @@ public partial class SoftRender {
 
         for (int i =0; i<vertexList.Count;) {
 
-#if DRAW_WIREFRAME
-            var fragcount = RastWireFrame(vertexList[i], vertexList[i + 1], vertexList[i + 2]);
+            if (wireFrame) {
+                var fragcount = RastWireFrame(vertexList[i], vertexList[i + 1], vertexList[i + 2]);
 
-            FragmentCount += fragcount;
-#elif USE_PARALLER
-            var fragcount = ParallRast(vertexList[i], vertexList[i + 1], vertexList[i + 2]);
+                FragmentCount += fragcount;
+            }
+            else if (multiThread) {
+                var fragcount = ParallRast(vertexList[i], vertexList[i + 1], vertexList[i + 2]);
 
-            FragmentCount += fragcount;
-#else
-            var fragcount = Rast(vertexList[i], vertexList[i + 1], vertexList[i + 2]);
+                FragmentCount += fragcount;
+            }
+            else {
+                var fragcount = Rast(vertexList[i], vertexList[i + 1], vertexList[i + 2]);
 
-            FragmentCount += fragcount;
-#endif
+                FragmentCount += fragcount;
+            }
             i += 3;
         }
     }

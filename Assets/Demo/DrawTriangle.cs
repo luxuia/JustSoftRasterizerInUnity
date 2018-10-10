@@ -12,7 +12,7 @@ public class DrawTriangle : MonoBehaviour {
         var texture = new Texture2D((int)image.rectTransform.sizeDelta.x, (int)image.rectTransform.sizeDelta.y);
         image.texture = texture;
 
-        var raster = new SoftRender(texture, null);
+        var raster = new SoftRender(texture, null, false, false);
 
         float width = texture.width;
         float height = texture.height;

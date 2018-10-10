@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using UnityEngine;
 using System.Threading;
 using UnityEngine.Profiling;
+using System.Runtime.CompilerServices;
 
 public partial class SoftRender {
 
@@ -29,9 +30,9 @@ public partial class SoftRender {
         for (int m = xMin; m < xMax + 1; m++) {
             for (int n = yMin; n < yMax + 1; n++) {
                 if (m < 0 || m > width - 1 || n < 0 || n > height - 1) continue;
-                if (!isLeftPoint(p1, p2, m + 0.5f, n + 0.5f)) continue;
-                if (!isLeftPoint(p2, p3, m + 0.5f, n + 0.5f)) continue;
-                if (!isLeftPoint(p3, p1, m + 0.5f, n + 0.5f)) continue;
+                if (!isLeftPoint(ref p1, ref p2, m + 0.5f, n + 0.5f)) continue;
+                if (!isLeftPoint(ref p2, ref p3, m + 0.5f, n + 0.5f)) continue;
+                if (!isLeftPoint(ref p3, ref p1, m + 0.5f, n + 0.5f)) continue;
                 var frag = new FragmentIn();
                 frag.pixelx = m;
                 frag.pixely = n;
@@ -41,6 +42,11 @@ public partial class SoftRender {
             }
         }
         return fragCount;
+    }
+
+    class FragmentCluster {
+        public FragmentIn[] frags = new FragmentIn[FragCountPerThread];
+        public int count = 0;
     }
 
     public int ParallRast(FragmentIn v1, FragmentIn v2, FragmentIn v3) {
@@ -67,25 +73,25 @@ public partial class SoftRender {
         ThreadPool.SetMinThreads(5, 5);
 
         WaitCallback cb = (arg) => {
-            var fraglist = arg as List<FragmentIn>;
+            var fraglist = arg as FragmentCluster;
             //Profiler.BeginThreadProfiling("my thread ", "thread ");
-            for (int i = 0; i < fraglist.Count; ++i) {
-                ThreadLerpFragment(fraglist[i]);
+            for (int i = 0; i < fraglist.count; ++i) {
+                ThreadLerpFragment(fraglist.frags[i]);
             }
 
             //Profiler.EndThreadProfiling();
-            if (Interlocked.Add(ref threadCount, -fraglist.Count) == 0) {
+            if (Interlocked.Add(ref threadCount, -fraglist.count) == 0) {
                 finishEvent.Set();
             };
         };
 
-        List<FragmentIn> frags = new List<FragmentIn>(FragCountPerThread);
+        FragmentCluster frags = new FragmentCluster();
         for (int m = xMin; m < xMax + 1; m++) {
             for (int n = yMin; n < yMax + 1; n++) {
                 if ((m < 0 || m > width - 1 || n < 0 || n > height - 1) ||
-                    (!isLeftPoint(p1, p2, m + 0.5f, n + 0.5f)) ||
-                    (!isLeftPoint(p2, p3, m + 0.5f, n + 0.5f)) ||
-                    (!isLeftPoint(p3, p1, m + 0.5f, n + 0.5f))) {
+                    (!isLeftPoint(ref p1, ref p2, m + 0.5f, n + 0.5f)) ||
+                    (!isLeftPoint(ref p2, ref p3, m + 0.5f, n + 0.5f)) ||
+                    (!isLeftPoint(ref p3, ref p1, m + 0.5f, n + 0.5f))) {
 
                     if (Interlocked.Decrement(ref threadCount) == 0) {
                         finishEvent.Set();
@@ -97,20 +103,21 @@ public partial class SoftRender {
                 frag.pixelx = m;
                 frag.pixely = n;
 
-                frags.Add(frag);
+                frags.frags[frags.count] = frag;
+                frags.count++;
 
                 // 最好情况应该是一个线程一个work，让每个线程的工作多一些。
                 // 一个每个frag都单独创建线程，创建的开销太大
-                if (frags.Count > FragCountPerThread) {
+                if (frags.count >= FragCountPerThread) {
                     ThreadPool.QueueUserWorkItem(cb, frags);
 
-                    frags = new List<FragmentIn>();
+                    frags = new FragmentCluster();
                 }
                 
                 fragCount++;
             }
         }
-        if (frags.Count > 0) {
+        if (frags.count > 0) {
             ThreadPool.QueueUserWorkItem(cb, frags);
         }
 
@@ -133,9 +140,9 @@ public partial class SoftRender {
         return 0;
     }
 
-    public bool isLeftPoint(Vector4 a, Vector4 b, float x, float y) {
-        float s = (a.x - x) * (b.y - y) - (a.y - y) * (b.x - x);
-        return s > 0 ? false : true;
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public bool isLeftPoint(ref Vector4 a, ref Vector4 b, float x, float y) {
+        return (a.x - x) * (b.y - y) - (a.y - y) * (b.x - x) <= 0;
     }
 
 
@@ -280,22 +287,16 @@ public partial class SoftRender {
     */
 
     void RealDoFragment(FragmentIn frag) {
-        var old_depth = depthBuffer[frag.pixelx, frag.pixely];
-        // do early z
-        if (frag.vertex.z > old_depth && old_depth > 0) {
-            EarlyZCount++;
-        };
-
+ 
         Color color = Frag(frag);
 
         DrawPixel(frag.pixelx, frag.pixely, ref color);
-        depthBuffer[frag.pixelx, frag.pixely] = frag.vertex.z;
     }
 
+    Color GREYCOLOR = new Color();
     // 基于三角形面积做插值
     void ThreadLerpFragment(FragmentIn frag) {
-        
-
+   
         var v1 = GLOBAL_PARALL_V1;
         var v2 = GLOBAL_PARALL_V2;
         var v3 = GLOBAL_PARALL_V3;
@@ -317,6 +318,17 @@ public partial class SoftRender {
 
         // do lerp
         frag.vertex = v2.vertex * u + v3.vertex * v + v1.vertex * w;
+
+        var old_depth = depthBuffer[frag.pixelx, frag.pixely];
+        // do early z
+        if (frag.vertex.z > old_depth && old_depth > 0) {
+            EarlyZCount++;
+            return;
+        };
+        depthBuffer[frag.pixelx, frag.pixely] = frag.vertex.z;
+        //DrawPixel(frag.pixelx, frag.pixely, ref GREYCOLOR);
+        //return;
+
         frag.normal = v2.normal * u + v3.normal * v + v1.normal * w;
         frag.worldPos = v2.worldPos * u + v3.worldPos * v + v1.worldPos * w;
         frag.uv = v2.uv * u + v3.uv * v + v1.uv * w;
