@@ -1,4 +1,5 @@
-﻿#define USE_PARALLER
+﻿//#define USE_PARALLER
+//#define DRAW_WIREFRAME
 
 using System.Collections;
 using System.Collections.Generic;
@@ -83,7 +84,7 @@ public partial class SoftRender {
 
 
     #region draw2d
-
+    //Bresenham Alg
     public void DrawLine(VertexIn start, VertexIn end, ref Color color) {
         //裁剪不可见的线
         if (!CohenSutherlandLineClip(ref start.pos, ref end.pos, ClipLowLeft, ClipUpRight)) {
@@ -401,7 +402,11 @@ public partial class SoftRender {
 
         for (int i =0; i<vertexList.Count;) {
 
-#if false&&USE_PARALLER
+#if DRAW_WIREFRAME
+            var fragcount = RastWireFrame(vertexList[i], vertexList[i + 1], vertexList[i + 2]);
+
+            FragmentCount += fragcount;
+#elif USE_PARALLER
             var fragcount = ParallRast(vertexList[i], vertexList[i + 1], vertexList[i + 2]);
 
             FragmentCount += fragcount;

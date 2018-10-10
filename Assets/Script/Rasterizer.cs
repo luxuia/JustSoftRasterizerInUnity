@@ -118,6 +118,20 @@ public partial class SoftRender {
 
         return fragCount;
     }
+    public int RastWireFrame(FragmentIn v1, FragmentIn v2, FragmentIn v3) {
+        var p1 = v1.vertex;
+        var p2 = v2.vertex;
+        var p3 = v3.vertex;
+
+        var vin1 = new VertexIn(p1.x, p1.y);
+        var vin2 = new VertexIn(p2.x, p2.y);
+        var vin3 = new VertexIn(p3.x, p3.y);
+
+        DrawLine(vin1, vin2, ref v1.color);
+        DrawLine(vin2, vin3, ref v2.color);
+        DrawLine(vin3, vin1, ref v3.color);
+        return 0;
+    }
 
     public bool isLeftPoint(Vector4 a, Vector4 b, float x, float y) {
         float s = (a.x - x) * (b.y - y) - (a.y - y) * (b.x - x);
